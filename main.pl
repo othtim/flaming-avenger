@@ -3,9 +3,9 @@
 #use warnings;
 use Time::HiRes qw(gettimeofday);
 use Data::Dumper qw(Dumper);
-use LWP::UserAgent;
 use HTTP::Request::Common qw(GET);
 use HTTP::Cookies;
+use WWW::Mechanize;
 
 
 
@@ -43,7 +43,7 @@ for($id = 1;$id <= $maxThreads; $id++){
 	if($newprocess == 0){
 	
 		#create a new session. $data{$id}{browser} is the main object
-		$data{$id}{browser} = LWP::UserAgent->new();
+		$data{$id}{browser} = WWW::Mechanize->new();
 		
 		#create a user-agent based on the thread id
 		$data{$id}{browser}->agent('Tim'.$id);
@@ -51,21 +51,27 @@ for($id = 1;$id <= $maxThreads; $id++){
 		#store cookie jar in memory in this threads hash
 		$data{$id}{browser}->cookie_jar( $data{$id}{cookie_jar} );
 		
-		
-		#we need to make an inital request to get the viewstate
+		#we make an initial request 
 		{
-			#assemble request
-			$data{$id}{request} = GET $target;
-			
 			#make request
-			$data{$id}{response} = $data{$id}{browser}->request( $data{$id}{request} );
-		
+			$data{$id}{browser}->get( $target ); 
+			
 			#check that things worked
-			if ($data{$id}{response}->is_success) {
-				print $data{$id}{response}->content;
+			if ($data{$id}{browser}->success()) {
+				if($DEBUG){ print $data{$id}{browser}->content() . "\n"; }
 			} else {
-				print $data{$id}{response}->status_line . "\n";
+				if($DEBUG){ print $data{$id}{browser}->status() . "\n"; }
 			}
+			
+			#we need to grab the "__VIEWSTATE" and "__EVENTVALIDATION" strings from the web page
+			#this may prove to be redundant. commenting till needed
+			# $data{$id}{__EVENTVALIDATION} = $data{$id}{browser}->value(__EVENTVALIDATION);
+			# $data{$id}{__VIEWSTATE} = $data{$id}{browser}->value(__VIEWSTATE);
+
+			#now we login. the field() function sets the value of a field (www::mechanize magic)
+			$data{$id}{browser}->field( 'txtUsername', '' );
+			$data{$id}{browser}->field( 'txtUsername', '' );
+			
 			
 		}
 			
@@ -76,7 +82,6 @@ for($id = 1;$id <= $maxThreads; $id++){
 	}
 
 }
-
 
 
 
