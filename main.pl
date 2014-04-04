@@ -1,3 +1,12 @@
+#
+# so far the script just logs in as a hard-coded user.
+# need to change this to log in with a random user from a hash like:
+# $users{someGeneratedInt}{username} = 'joe';	#un for this user
+# $users{someGeneratedInt}{password} = 'joe';	#pw for this user
+#  $users{someGeneratedInt}{inUse} = 1;			#is this un/pw combo in use? if so no other threads will attempt to use it
+#
+#
+
 
 #use strict;
 #use warnings;
@@ -22,15 +31,18 @@ $SIG{'CHLD'} = \&child_handler;
 
 
 # data structure
+# $data{$id}{...} 		 >>>>> where $id is an int that contains the thread number 
+# $data{$id}{browser} 	 >>>>> where browser is a www::mechanize object that contains the webpage we are working with
+# $data{$id}{cookie_jar} >>>>> where cookie jar is a cookie store for the www:mechanize object
 my %data;
 
 
 # where to point the script -change later
-$target = 'https://schoollogic.psd70.ab.ca/Schoollogic/';
+$target = 'https://schoollogic.psd70.ab.ca/SchoolLogic/login.aspx?ReturnUrl=%2fSchoollogic%2fdefault.aspx';
 
 
 my $id;
-my $maxThreads = 2;
+my $maxThreads = 1;
 
 #worker loop
 for($id = 1;$id <= $maxThreads; $id++){
@@ -43,13 +55,11 @@ for($id = 1;$id <= $maxThreads; $id++){
 	if($newprocess == 0){
 	
 		#create a new session. $data{$id}{browser} is the main object
-		$data{$id}{browser} = WWW::Mechanize->new();
+		#store cookie jar in memory in this threads hash
+		$data{$id}{browser} = WWW::Mechanize->new( cookie_jar => {} );
 		
 		#create a user-agent based on the thread id
-		$data{$id}{browser}->agent('Tim'.$id);
-		
-		#store cookie jar in memory in this threads hash
-		$data{$id}{browser}->cookie_jar( $data{$id}{cookie_jar} );
+		$data{$id}{browser}->agent('Mozilla/5.0'.$id);
 		
 		#we make an initial request 
 		{
@@ -57,24 +67,35 @@ for($id = 1;$id <= $maxThreads; $id++){
 			$data{$id}{browser}->get( $target ); 
 			
 			#check that things worked
-			if ($data{$id}{browser}->success()) {
-				if($DEBUG){ print $data{$id}{browser}->content() . "\n"; }
-			} else {
-				if($DEBUG){ print $data{$id}{browser}->status() . "\n"; }
+			if (! $data{$id}{browser}->success()) {
+				print $data{$id}{browser}->status() . "\n"; 
 			}
 			
-			#we need to grab the "__VIEWSTATE" and "__EVENTVALIDATION" strings from the web page
-			#this may prove to be redundant. commenting till needed
-			# $data{$id}{__EVENTVALIDATION} = $data{$id}{browser}->value(__EVENTVALIDATION);
-			# $data{$id}{__VIEWSTATE} = $data{$id}{browser}->value(__VIEWSTATE);
-
-			#now we login. the field() function sets the value of a field (www::mechanize magic)
-			$data{$id}{browser}->field( 'txtUsername', '' );
-			$data{$id}{browser}->field( 'txtUsername', '' );
+			#now we login. the field() function sets the value of a field (www::mechanize magic). 
+			#populate username and password, hidden fields, then submit
+			$result = $data{$id}{browser}->submit_form(	form_name => 'Form1',
+														fields => {
+															txtUserName => 'kGarner',
+															txtPassword => '10016',
+															__EVENTVALIDATION => $data{$id}{browser}->value(__EVENTVALIDATION),
+															__VIEWSTATE => $data{$id}{browser}->value(__VIEWSTATE),
+															Submit => 'Login',
+															},
+														button => 'Submit'
+														);
 			
-			
+			#print $result->content();
+		
 		}
-			
+		
+		#make a second request
+		#{
+		#
+		#$data{$id}{browser}->get( 'https://schoollogic.psd70.ab.ca/Schoollogic/default.aspx' ); 
+		#print $data{$id}{browser} -> content();
+		#
+		#}
+		
 	
 		#get time elapsed since thread started
 		$data{$id}{time} = Time::HiRes::gettimeofday() - $data{$id}{time};
