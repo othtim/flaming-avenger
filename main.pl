@@ -1,13 +1,13 @@
 #example: perl mail.pl -u userlist.txt -t logfile.txt
 #
 #todo: make this thing count the number of threads that are active, and keep that number up. and stay alive until control-c
-# 
-
+# also needs to spawn threads at an interval (will hack with sleep() calls until i get the action interval set up))
+#
 
 
 #use strict;
 #use warnings;
-use Cwd;
+#use Cwd;
 use Time::HiRes qw(gettimeofday);
 use Data::Dumper qw(Dumper);
 use HTTP::Request::Common qw(GET);
@@ -26,9 +26,9 @@ my $log_file;
 my $log_filehandle;
 
 ##parse arguments
-for (my $argv_ident_counter = 0 ; $argv_ident_counter < @ARGV ; $argv_ident_counter++){  
+for (my $argv_ident_counter = 0 ; $argv_ident_counter < $#ARGV + 1 ; $argv_ident_counter++){  
 	#skip the last argument, it wont be a switch
-	next if($argv_ident_counter == $#ARGV );
+	next if($argv_ident_counter == $#ARGV + 1);
 	if ($ARGV[$argv_ident_counter] eq "-u"){
 		$userlist_file = $ARGV[$argv_ident_counter + 1];
 	}elsif($ARGV[$argv_ident_counter] eq "-t"){
@@ -43,7 +43,6 @@ if(defined $log_file){
 	open($log_filehandle , ">>" , $log_file) || die("could not find user list $log_file, quitting...\n");
 	#and we just keep this open to write to. via log_message(). close at end of program run.
 }
-
 
 
 
@@ -69,7 +68,6 @@ close($userlist_filehandle) || warn("could not close user list $userlist \n");
 
 
 
-
 # data structure
 # $data{$id}{...} 		 >>>>> where $id is an int that contains the thread number 
 # $data{$id}{browser} 	 >>>>> where browser is a www::mechanize object that contains the webpage we are working with
@@ -86,7 +84,9 @@ $target = 'https://schoollogic.psd70.ab.ca/SchoolLogic/login.aspx?ReturnUrl=%2fS
 
 my $id;
 my $maxThreads = 1;
-
+my $currentThreads = 0;
+my $threadInterval = 30;	#seconds
+my $activityInterval = 10;
 
 
 #while(1){
@@ -101,7 +101,7 @@ my $maxThreads = 1;
 		$newprocess = fork();
 		if($newprocess == 0){
 		
-
+			
 		
 			#create a new session. $data{$id}{browser} is the main object
 			#store cookie jar in memory in this threads hash
@@ -201,7 +201,7 @@ my $maxThreads = 1;
 			exit(0);
 		}
 
-		sleep(10);
+		sleep(10); #temp hack to make this thing wait a while before dying
 	}
 
 #end of while() to wait for child functions
@@ -211,11 +211,7 @@ my $maxThreads = 1;
 ############################################################
 ############################################################
 ############################################################
-#PROGRAM CLEANUP
-
-
-#close logfile if it exists
-
+#PROGRAM CLEANUP GOES HERE
 
 
 
@@ -237,7 +233,7 @@ if($DEBUG){
 ################################################################
 ################################################################
 ################################################################
-#########subs
+#SUBS GO HERE
 
 
 sub exit_clean(){
