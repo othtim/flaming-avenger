@@ -1,12 +1,6 @@
 #
-# so far the script just logs in as a hard-coded user.
-# need to change this to log in with a random user from a hash like:
-# $users{someGeneratedInt}{username} = 'joe';	#un for this user
-# $users{someGeneratedInt}{password} = 'joe';	#pw for this user
-#  $users{someGeneratedInt}{inUse} = 1;			#is this un/pw combo in use? if so no other threads will attempt to use it
 #
 #
-
 
 #use strict;
 #use warnings;
@@ -16,24 +10,51 @@ use HTTP::Request::Common qw(GET);
 use HTTP::Cookies;
 use WWW::Mechanize;
 
-
-
 $DEBUG = 0;
 $SIG{'INT'} = \&exit_clean;
 $SIG{'QUIT'} = \&exit_clean;
 $SIG{'CHLD'} = \&child_handler;
 
-#cookie info
- $cookie_jar = HTTP::Cookies->new(
-    file => "C:\lwp_cookies.dat",
-    autosave => 1,
-  );
+my $userlist_index_counter; #counter for incrementing the index when populating %userlist hash
+my $userlist_inuse_LOCK = 0; #variable to store a lock value for the "inuse" check.
+
+
+##parse arguments
+OUTER:
+for ($argv_ident_counter = 0 ; $argv_ident_counter < @ARGV ; $argv_ident_counter++){  
+  if (@ARGV[$argv_ident_counter] eq "-u"){
+      $userlist = @ARGV[$argv_ident_counter + 1];
+  }
+}
+
+##parse userlist
+# $users{someGeneratedInt}{username} = 'joe';	#un for this user
+# $users{someGeneratedInt}{password} = 'joe';	#pw for this user
+#  $users{someGeneratedInt}{inuse} = 1;			#is this un/pw combo in use? if so no other threads will attempt to use it
+my %userlist;
+
+#open user list file for reading
+open(USERLIST , $userlist) || die("could not find user list $userlist, quitting...\n");
+$userlist_index_counter = 1;
+while(<USERLIST>){
+	#if the format of the record is okay, load into data structure
+	if( m/^(\s|\S)+,(\S|\s)*$/ ){
+		$userlist{$userlist_index_counter}{username} = $1;
+		$userlist{$userlist_index_counter}{password} = $2;
+		$userlist{$userlist_index_counter}{inuse} = 0;
+		$userlist_index_counter++;
+	}
+}
+close(USERLIST) || warn("could not close user list $userlist \n");
 
 
 # data structure
 # $data{$id}{...} 		 >>>>> where $id is an int that contains the thread number 
 # $data{$id}{browser} 	 >>>>> where browser is a www::mechanize object that contains the webpage we are working with
 # $data{$id}{cookie_jar} >>>>> where cookie jar is a cookie store for the www:mechanize object
+# $data{$id}{username} 	 >>>>> username
+# $data{$id}{password}   >>>>> password
+# $data{$id}{unpwindex}  >>>>> index of the in-use un/pw record in the %userlist hash
 my %data;
 
 
@@ -47,7 +68,7 @@ my $maxThreads = 1;
 #worker loop
 for($id = 1;$id <= $maxThreads; $id++){
 
-	#initial timer
+	#initial timer for timing the thread
 	$data{$id}{time} = Time::HiRes::gettimeofday();
 
 	#child process time
@@ -61,7 +82,34 @@ for($id = 1;$id <= $maxThreads; $id++){
 		#create a user-agent based on the thread id
 		$data{$id}{browser}->agent('Mozilla/5.0'.$id);
 		
-		#we make an initial request 
+		#we need to search through %userlist. this could create a race condition, so lock this function.
+		#this should be safe enough.
+		#loop until lock is free
+		USERLIST_INUSE_LOCK:
+		while($userlist_inuse_LOCK == 1){
+			
+			#if we are here that means this has become unlocked. so relock it.
+			$userlist_inuse_LOCK = 1;
+						
+			foreach my $userlist_sort_indexes (sort keys %userlist) {
+				#and find a user/pw combo that isnt in use
+				if($userlist{$userlist_sort_indexes}{inuse} == 0){
+					#then we are going to take this user and mark it in-use
+					$userlist{$userlist_sort_indexes}{inuse} = 1;
+					#and assign this thread to use this un/pw
+					$data{$id}{username} = $userlist{$userlist_sort_indexes}{username};
+					$data{$id}{password} = $userlist{$userlist_sort_indexes}{password};
+					$data{$id}{unpwindex} = $userlist_sort_indexes;
+				};
+			}
+
+			#we are done now, unlock.
+			$userlist_inuse_LOCK = 0;			
+		}
+		
+		
+		
+		#we make an initial request. login stage
 		{
 			#make request
 			$data{$id}{browser}->get( $target ); 
@@ -88,7 +136,9 @@ for($id = 1;$id <= $maxThreads; $id++){
 		
 		}
 		
-		#make a second request
+		
+		
+		#NEED TO TURN THIS SECTION IN FETCHING JOBS FROM THE WORK LIST
 		#{
 		#
 		#$data{$id}{browser}->get( 'https://schoollogic.psd70.ab.ca/Schoollogic/default.aspx' ); 
@@ -96,9 +146,25 @@ for($id = 1;$id <= $maxThreads; $id++){
 		#
 		#}
 		
+		
+		
+		
+		
+		########################################
+		#IMPLEMENT LOGOUT HERE
+		########################################
+		
+		
+		########################################THREAD CLEANUP
+		#release the username/password
+		$userlist{ $data{$id}{unpwindex} }{inuse} = 0;
+		$data{$id}{username} = '';
+		$data{$id}{password} = '';
+		$data{$id}{unpwindex} = '';
 	
 		#get time elapsed since thread started
 		$data{$id}{time} = Time::HiRes::gettimeofday() - $data{$id}{time};
+		
 		exit(0);
 	}
 
@@ -117,6 +183,12 @@ if($DEBUG){
 }
 
 
+################################################################
+################################################################
+################################################################
+################################################################
+################################################################
+################################################################
 #########subs
 
 
@@ -137,6 +209,11 @@ sub child_handler(){
 	wait;
 }
 
+
+sub parse_users(){
+
+
+}
 
 # for reference
 #
