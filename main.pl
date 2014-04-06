@@ -14,7 +14,7 @@ use HTTP::Request::Common qw(GET);
 use HTTP::Cookies;
 use WWW::Mechanize;
 
-my $DEBUG = 0;
+my $DEBUG = 1;
 $SIG{'INT'} = \&exit_clean;
 $SIG{'QUIT'} = \&exit_clean;
 $SIG{'CHLD'} = \&child_handler;
@@ -57,10 +57,10 @@ open(my $userlist_filehandle , "<", $userlist_file) || die("could not find user 
 $userlist_index_counter = 1;
 while(<$userlist_filehandle>){
 	#if the format of the record is okay, load into data structure
-	if( m/^(\s|\S)+,(\S|\s)*$/ ){
-		$userlist{$userlist_index_counter}{username} = $1;
-		$userlist{$userlist_index_counter}{password} = $2;
-		$userlist{$userlist_index_counter}{inuse} = 0;
+	if( m/^([A-Za-z0-9 ]+),([A-Za-z0-9 ]*)$/ ){
+		$userlist{$userlist_index_counter}{'username'} = $1;
+		$userlist{$userlist_index_counter}{'password'} = $2;
+		$userlist{$userlist_index_counter}{'inuse'} = 0;
 		$userlist_index_counter++;
 	}
 }
@@ -69,103 +69,116 @@ close($userlist_filehandle) || warn("could not close user list $userlist \n");
 
 
 # data structure
-# $data{$id}{...} 		 >>>>> where $id is an int that contains the thread number 
-# $data{$id}{browser} 	 >>>>> where browser is a www::mechanize object that contains the webpage we are working with
-# $data{$id}{cookie_jar} >>>>> where cookie jar is a cookie store for the www:mechanize object
-# $data{$id}{username} 	 >>>>> username
-# $data{$id}{password}   >>>>> password
-# $data{$id}{unpwindex}  >>>>> index of the in-use un/pw record in the %userlist hash
+# $data{$id}{...}			where $id is an int that contains the thread number 
+# $data{$id}{'browser'}		where browser is a www::mechanize object that contains the webpage we are working with
+# $data{$id}{'cookie_jar'}	where cookie jar is a cookie store for the www:mechanize object
+# $data{$id}{'username'}	username
+# $data{$id}{'password'}	password
+# $data{$id}{'unpwindex'}	index of the in-use un/pw record in the %userlist hash
 my %data;
 
 
 # where to point the script -change later
-$target = 'https://schoollogic.psd70.ab.ca/SchoolLogic/login.aspx?ReturnUrl=%2fSchoollogic%2fdefault.aspx';
+$target = 'http://sales.schoollogic.com/SchoolLogic/login.aspx?ReturnUrl=%2fschoollogic';
 
 
-my $id;
+
 my $maxThreads = 1;
 my $currentThreads = 0;
-my $threadInterval = 30;	#seconds
+my $threadInterval = 10;	#seconds
 my $activityInterval = 10;
+my $newprocess;
+
+my $id = 0;
 
 
-#while(1){
+while(1){
 
-	#worker loop
-	for($id = 1;$id <= $maxThreads; $id++){
+	#between thread creation we are going to sleep a certain amount of time.
+	sleep($threadInterval);
 
+	#make threads until we are at $maxThreads
+	if($currentThreads < $maxThreads){
+
+		#increment the thread id counter
+		$id++;
+	
 		#initial timer for timing the thread
-		$data{$id}{time} = Time::HiRes::gettimeofday();
+		$data{$id}{'time'} = Time::HiRes::gettimeofday();
 
 		#child process time
 		$newprocess = fork();
 		if($newprocess == 0){
 		
-			
+			#if we are here, we've created a new thread. increment the thread counter and log.
+			$currentThreads++;
+			log_message("$id, create, " . $data{$id}{'time'});
+			#how many threads are out there right now?
+			if($DEBUG){ print "current threads: $currentThreads , max threads: $maxThreads \n";}
 		
 			#create a new session. $data{$id}{browser} is the main object
 			#store cookie jar in memory in this threads hash
-			$data{$id}{browser} = WWW::Mechanize->new( cookie_jar => {} );
+			$data{$id}{'browser'} = WWW::Mechanize->new( cookie_jar => $data{$id}{'cookie_jar'} );
 			
-			#create a user-agent based on the thread id
-			$data{$id}{browser}->agent('Mozilla/5.0'.$id);
+			#create a user-agent based on the thread id 
+			$data{$id}{'browser'}->agent($id);
 			
 			#we need to search through %userlist. this could create a race condition, so lock this function.
 			#this should be safe enough.
 			#loop until lock is free
 			USERLIST_INUSE_LOCK:
-			while($userlist_inuse_LOCK == 1){
-				
+			while($userlist_inuse_LOCK  != 0){
+				#wait;
+			}
+			if($userlist_inuse_LOCK == 0){
 				#if we are here that means this has become unlocked. so relock it.
 				$userlist_inuse_LOCK = 1;
-							
+					
 				foreach my $userlist_sort_indexes (sort keys %userlist) {
 					#and find a user/pw combo that isnt in use
-					if($userlist{$userlist_sort_indexes}{inuse} == 0){
+					if($userlist{$userlist_sort_indexes}{'inuse'} == 0){
 						#then we are going to take this user and mark it in-use
-						$userlist{$userlist_sort_indexes}{inuse} = 1;
+						$userlist{$userlist_sort_indexes}{'inuse'} = 1;
 						#and assign this thread to use this un/pw
-						$data{$id}{username} = $userlist{$userlist_sort_indexes}{username};
-						$data{$id}{password} = $userlist{$userlist_sort_indexes}{password};
-						$data{$id}{unpwindex} = $userlist_sort_indexes;
+						$data{$id}{'username'} = $userlist{$userlist_sort_indexes}{'username'};
+						$data{$id}{'password'} = $userlist{$userlist_sort_indexes}{'password'};
+						$data{$id}{'unpwindex'} = $userlist_sort_indexes;
 					};
 				}
-
 				#we are done now, unlock.
-				$userlist_inuse_LOCK = 0;			
-			}
+				$userlist_inuse_LOCK = 0;
+d			}
+			
 			
 			
 			##LOGIN
 			#we make an initial request. login stage
-			{
-				#make request
-				$data{$id}{browser}->get( $target ); 
-				
-				#check that things worked
-				if (! $data{$id}{browser}->success()) {
-					print $data{$id}{browser}->status() . "\n"; 
-				}
-				
-				
-				
-				#now we login. the field() function sets the value of a field (www::mechanize magic). 
-				#populate username and password, hidden fields, then submit
-				$result = $data{$id}{browser}->submit_form(	form_name => 'Form1',
-															fields => {
-																txtUserName => 'kGarner',
-																txtPassword => '10016',
-																__EVENTVALIDATION => $data{$id}{browser}->value(__EVENTVALIDATION),
-																__VIEWSTATE => $data{$id}{browser}->value(__VIEWSTATE),
-																Submit => 'Login',
-																},
-															button => 'Submit'
-															);
-				
-				#print $result->content();
+			#make request
+			$data{$id}{'browser'}->get( $target ); 
 			
+			#check that things worked
+			if (! $data{$id}{'browser'}->success()) {
+				print $data{$id}{'browser'}->status() . "\n"; 
 			}
 			
+			#print $data{$id}{'browser'}->content();
+
+			#now we login. the field() function sets the value of a field (www::mechanize magic). 
+			#populate username and password, hidden fields, then submit
+			$data{$id}{'result'} = $data{$id}{'browser'}->submit_form(	form_name => 'Form1',
+														fields => {
+															txtUserName => $data{$id}{'username'},
+															txtPassword => $data{$id}{'password'},
+															__EVENTVALIDATION => $data{$id}{'browser'}->value(__EVENTVALIDATION),
+															#__VIEWSTATE => $data{$id}{'browser'}->value(_VIEWSTATE),
+															Submit => 'Login',
+															},
+														button => 'Submit'
+														);
+			
+			#print $data{$id}{'result'};#->content();
+			
+
 			
 			
 			
@@ -173,8 +186,8 @@ my $activityInterval = 10;
 			#NEED TO TURN THIS SECTION IN FETCHING JOBS FROM THE WORK LIST
 			#{
 			#
-			#$data{$id}{browser}->get( 'https://schoollogic.psd70.ab.ca/Schoollogic/default.aspx' ); 
-			#print $data{$id}{browser} -> content();
+			#$data{$id}{'browser'}->get( 'https://schoollogic.psd70.ab.ca/Schoollogic/default.aspx' ); 
+			#print $data{$id}{'browser'}->content();
 			#
 			#}
 			
@@ -185,27 +198,55 @@ my $activityInterval = 10;
 			#IMPLEMENT LOGOUT HERE
 			########################################
 			
+
 			
+			
+
+		
+			#get time elapsed since thread started
+			$data{$id}{time} = Time::HiRes::gettimeofday() - $data{$id}{'time'};
+
+			
+			#check exit state of this thread
+			if($DEBUG){
+				#print Dumper \%data;
+				foreach $i (sort keys %data) {
+					foreach my $time (keys %{ $data{$id} }) {
+						#ignore the 'browser' element
+						#unless($time eq 'browser'){
+							print "$i: $time: $data{$id}{$time}\n";
+						#}
+					}
+				}
+			}				
+		
+			#log and exit
+			log_message("$id, exit, " . $data{$id}{'time'});
+
 			
 			
 			########################################THREAD CLEANUP
 			#release the username/password
-			$userlist{ $data{$id}{unpwindex} }{inuse} = 0;
-			$data{$id}{username} = '';
-			$data{$id}{password} = '';
-			$data{$id}{unpwindex} = '';
-		
-			#get time elapsed since thread started
-			$data{$id}{time} = Time::HiRes::gettimeofday() - $data{$id}{time};
+			$userlist{ $data{$id}{'unpwindex'} }{'inuse'} = 0;
+			$data{$id}{'username'} = '';
+			$data{$id}{'password'} = '';
+			$data{$id}{'unpwindex'} = '';
 			
+			sleep(1);
 			exit(0);
 		}
 
-		sleep(10); #temp hack to make this thing wait a while before dying
+
+		
+
+
+		
+		
+		
+
 	}
 
-#end of while() to wait for child functions
-#}
+}
 
 ############################################################
 ############################################################
@@ -215,15 +256,6 @@ my $activityInterval = 10;
 
 
 
-#check work
-if($DEBUG){
-	print Dumper \%data;
-	foreach my $id (sort keys %data) {
-		foreach my $time (keys %{ $data{$id} }) {
-			print "$name, $subject: $data{$id}{$time}\n";
-		}
-	}
-}
 
 
 
@@ -241,12 +273,11 @@ sub exit_clean(){
 	if($log_file != 0){ 
 		close($log_filehandle) || warn("could not close log file $log_file \n"); 
 	}
-	$sig_got = @_;
 	$SIG{'INT'}  = 'IGNORE';
 	$SIG{'QUIT'} = 'IGNORE';
 	close(SERVERSOCK);
 	close(CHLDSOCK);
-	die("Quitting on signal $sig_got\n");
+	die("Quitting on signal " . @_ . "\n");
 }
 
 
