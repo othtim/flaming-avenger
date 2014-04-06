@@ -1,19 +1,18 @@
-#example: perl mail.pl -u userlist.txt -t logfile.txt
+#example: perl main.pl -u userlist.txt -t logfile.txt
 #
 # need to add a routine to the parent thread that checks if threads exited abnormally, and regain their un/pw
 # 
-# need to start work loop
+# started on the work parts. will eventually have to write a way to parse an external file.
 #
 
 
-#use strict;
-#use warnings;
-#use Cwd;
+use strict;
+use warnings;
 use threads;
 use threads::shared;
 use Thread::Semaphore;
 use Time::HiRes qw(gettimeofday);
-use Data::Dumper qw(Dumper);
+#use Data::Dumper qw(Dumper);
 use HTTP::Request::Common qw(GET);
 use HTTP::Cookies;
 use WWW::Mechanize;
@@ -26,14 +25,14 @@ $SIG{'CHLD'} = \&child_handler;
 #for locking use_credentials
 my $use_credentials_semaphore = Thread::Semaphore->new();
 
+# where to point the script -change later
+my $target = 'http://sales.schoollogic.com/SchoolLogic/login.aspx?ReturnUrl=%2fschoollogic';
 
-my $userlist_index_counter; #counter for incrementing the index when populating %userlist hash
+my $userlist_index_counter = 1; #counter for incrementing the index when populating %userlist hash
 my $userlist_inuse_LOCK; #variable to store a lock value for the "inuse" check.
-$userlist_inuse_LOCK = 0;
-
 my $log_file;
 my $log_filehandle;
-
+my $userlist_file;
 
 ##parse arguments
 for (my $argv_ident_counter = 0 ; $argv_ident_counter < $#ARGV + 1 ; $argv_ident_counter++){  
@@ -60,44 +59,48 @@ if(defined $log_file){
 #  $users{someGeneratedInt}{inuse} = 1;			#is this un/pw combo in use? if so no other threads will attempt to use it
 my %userlist;
 
+
 #open user list file for reading
-open(my $userlist_filehandle , "<", $userlist_file) || die("could not find user list $userlist, quitting...\n");
-$userlist_index_counter = 1;
+open(my $userlist_filehandle , "<", $userlist_file) || die("could not find user list $userlist_file, quitting...\n");
 
 while(<$userlist_filehandle>){
 	#if the format of the record is okay, load into data structure
 	if( m/^([A-Za-z0-9 ]+),([A-Za-z0-9 ]*)$/ ){
+		share($userlist{$userlist_index_counter}{'username'});
+		share($userlist{$userlist_index_counter}{'password'});
+		share($userlist{$userlist_index_counter}{'inuse'});
 		$userlist{$userlist_index_counter}{'username'} = $1;
 		$userlist{$userlist_index_counter}{'password'} = $2;
 		$userlist{$userlist_index_counter}{'inuse'} = 0;
 		$userlist_index_counter++;
 	}
 }
-close($userlist_filehandle) || warn("could not close user list $userlist \n");
+close($userlist_filehandle) || warn("could not close user list $userlist_file \n");
+
+###########
+# work lists are a hash of hashes. 
+# each key is a work item. 
+# each value contains keys for the type of work, the url to get, and a string to 'verify' that its the expected page.
+# $work{'1'}{'1'}{'type'} = 'GET' 
+# $work{'1'}{'1'}{'url'} = 'www.google.ca' 
+# $work{'1'}{'1'}{'verify'} = '<title>Google</title>' 
+my %work;
+
+#some hardcoded test values
+$work{'1'}{'1'}{'type'} = 'GET';
+$work{'1'}{'1'}{'url'} = 'www.google.ca';
+$work{'1'}{'1'}{'verify'} = '<title>Google</title>';
+
+$work{'1'}{'2'}{'type'} = 'GET';
+$work{'1'}{'2'}{'url'} = 'www.schoollogic.com';
+$work{'1'}{'2'}{'verify'} = '<title>School Logic</title>';
 
 
 
-# data structure
-# $data{$id}{...}			where $id is an int that contains the thread number 
-# $data{'currentThreads'}	thread counter
-my %data;
-
-#data structure for threads
-# $thread_data{'browser'}		where browser is a www::mechanize object that contains the webpage we are working with
-# $thread_data{'cookie_jar'}	where cookie jar is a cookie store for the www:mechanize object
-# $thread_data{'username'}
-# $thread_data{'password'}
-my %thread_data;
-
-
-
-# where to point the script -change later
-$target = 'http://sales.schoollogic.com/SchoolLogic/login.aspx?ReturnUrl=%2fschoollogic';
-
-
+###########
 
 my $maxThreads = 2;
-my $threadInterval = 0;	#seconds
+my $threadInterval = 4;	#seconds
 my $activityInterval = 10;
 
 
@@ -113,6 +116,13 @@ while(1){
 		#child process time
 		threads->create(sub {
 
+			#data structure for threads
+			# $thread_data{'browser'}		where browser is a www::mechanize object that contains the webpage we are working with
+			# $thread_data{'cookie_jar'}	where cookie jar is a cookie store for the www:mechanize object
+			# $thread_data{'username'}
+			# $thread_data{'password'}
+			my %thread_data;
+					
 			#initial timer for timing the thread
 			$thread_data{'time'} = Time::HiRes::gettimeofday();
 		
@@ -126,13 +136,16 @@ while(1){
 			$thread_data{'browser'}->agent(threads->tid());
 			
 			#we need to search through %userlist. this could create a race condition, so lock this function.
-			my $unpwindex = use_credentials();
-			
-			
-
-			
+			#need better way to trap return values of 0 (ie, no un/pw found). for now, create one login per thread.
+			my $unpwindex = 0;
+			my $i;
+			while($unpwindex == 0){
+				for($i=1;$i<rand(1000);$i++){ };
+				$unpwindex = use_credentials();
+			}
 				
-			
+				
+	
 			##LOGIN
 			#we make an initial request. login stage
 			#make request
@@ -206,6 +219,7 @@ while(1){
 			
 			########################################THREAD CLEANUP
 			#release the username/password
+			free_credentials($unpwindex);
 			
 			#exit thread	
 			threads->exit();
@@ -240,8 +254,10 @@ while(1){
 sub exit_clean(){
 	#put some thread cleanup in here
 	#close logfile if it exists
-	if($log_file != 0){ 
-		close($log_filehandle) || warn("could not close log file $log_file \n"); 
+	if(defined $log_file){
+		if($log_file != 0){ 
+			close($log_filehandle) || warn("could not close log file $log_file \n"); 
+		}
 	}
 	$SIG{'INT'}  = 'IGNORE';
 	$SIG{'QUIT'} = 'IGNORE';
@@ -278,11 +294,12 @@ sub log_message(){
 
 #returns a free un/pw, and sets it in-use in the hash
 sub use_credentials() {
-	$returnVal = 0;
+	my $returnVal = 0;
 	foreach my $userlist_sort_indexes (sort keys %userlist) {
 		next if $returnVal != 0;
 		#semaphore to lock this code block
 		$use_credentials_semaphore->down();
+
 		if($userlist{$userlist_sort_indexes}{'inuse'} == 0){
 		#then we are going to take this un/pw and mark it in-use
 			$userlist{$userlist_sort_indexes}{'inuse'} = 1;
@@ -301,21 +318,6 @@ sub free_credentials() {
 	my $index = shift(@_);	
 	$userlist{$index}{'inuse'} = 0;
 }
-
-
-# for reference
-#
-#foreach my $name (sort keys %grades) {
-#foreach my $subject (keys %{ $grades{$name} }) {
-#print "$name, $subject: $grades{$name}{$subject}\n";
-#}
-#}
-
-
-
-
-
-
 
 
 
