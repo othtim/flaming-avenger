@@ -26,7 +26,7 @@ $SIG{'CHLD'} = \&child_handler;
 my $use_credentials_semaphore = Thread::Semaphore->new();
 
 # where to point the script -change later
-my $target = 'http://sales.schoollogic.com/SchoolLogic/login.aspx?ReturnUrl=%2fschoollogic';
+my $target = '';
 
 my $userlist_index_counter = 1; #counter for incrementing the index when populating %userlist hash
 my $userlist_inuse_LOCK; #variable to store a lock value for the "inuse" check.
@@ -84,15 +84,16 @@ close($userlist_filehandle) || warn("could not close user list $userlist_file \n
 # $work{'1'}{'1'}{'type'} = 'GET' 
 # $work{'1'}{'1'}{'url'} = 'www.google.ca' 
 # $work{'1'}{'1'}{'verify'} = '<title>Google</title>' 
+#ideally work will be grabbed based on a system of what "likely user actions" are. ie % chance of a user doing such and such.
 my %work;
 
 #some hardcoded test values
 $work{'1'}{'1'}{'type'} = 'GET';
-$work{'1'}{'1'}{'url'} = 'www.google.ca';
+$work{'1'}{'1'}{'url'} = 'http://www.google.ca';
 $work{'1'}{'1'}{'verify'} = '<title>Google</title>';
 
 $work{'1'}{'2'}{'type'} = 'GET';
-$work{'1'}{'2'}{'url'} = 'www.schoollogic.com';
+$work{'1'}{'2'}{'url'} = 'http://www.schoollogic.com';
 $work{'1'}{'2'}{'verify'} = '<title>School Logic</title>';
 
 
@@ -130,10 +131,10 @@ while(1){
 		
 			#create a new session. $data{$id}{browser} is the main object
 			#store cookie jar in memory in this threads hash
-			$thread_data{'browser'} = WWW::Mechanize->new( cookie_jar => $thread_data{'cookie_jar'} );
+			$thread_data{'browser'} = WWW::Mechanize->new( cookie_jar => {} );
 			
 			#create a user-agent based on the thread id 
-			$thread_data{'browser'}->agent(threads->tid());
+			$thread_data{'browser'}->agent('Mozilla 5.0' . threads->tid());
 			
 			#we need to search through %userlist. this could create a race condition, so lock this function.
 			#need better way to trap return values of 0 (ie, no un/pw found). for now, create one login per thread.
@@ -149,51 +150,105 @@ while(1){
 			##LOGIN
 			#we make an initial request. login stage
 			#make request
-#			$thread_data{'browser'}->get( $target ); 
+			$thread_data{'browser'}->get( $target ); 
 			
 			#check that things worked
-#			if (! $thread_data{'browser'}->success()) {
-#				print $thread_data{'browser'}->status() . "\n"; 
-#			}
+			if (! $thread_data{'browser'}->success()) {
+				print $thread_data{'browser'}->status() . "\n"; 
+			}
 			
 			
 			#now we login. the field() function sets the value of a field (www::mechanize magic). 
 			#populate username and password, hidden fields, then submit
-#			$thread_data{'browser'}->submit_form(	form_name => 'Form1',
-#														fields => {
-#															txtUserName => $userlist{$unpwindex}{'username'},
-#															txtPassword => $userlist{$unpwindex}{'password'},
-#															__EVENTVALIDATION => $thread_data{'browser'}->value(__EVENTVALIDATION),
-#															#__VIEWSTATE => $thread_data{'browser'}->value(_VIEWSTATE),
-#															Submit => 'Login',
-#															},
-#														button => 'Submit'
-#														);
+			my $result = $thread_data{'browser'}->submit_form(	form_name => 'Form1',
+														fields => {
+															txtUserName => $userlist{$unpwindex}{'username'},
+															txtPassword => $userlist{$unpwindex}{'password'},
+															__EVENTVALIDATION => $thread_data{'browser'}->value('__EVENTVALIDATION'),
+															#__VIEWSTATE => $thread_data{'browser'}->value('_VIEWSTATE'),
+															Submit => 'Login',
+															},
+														button => 'Submit'
+														);
 			
-
+			# check that we are on the right page. if not, quit thread.
+			if($result->content() =~ m/<head id="ctl00_Head1">/){
+					log_message(threads->tid() . ", login, , " . (Time::HiRes::gettimeofday() - $thread_data{'time'}));
+			}else{
+					#log and quit if we cant login
+					print $result->content();
+					log_message(threads->tid() . ", login error, , " . (Time::HiRes::gettimeofday() - $thread_data{'time'}));
+					threads->exit();	
+			}
 			
-
+			
 			
 			
 			
 			
 			#NEED TO TURN THIS SECTION IN FETCHING JOBS FROM THE WORK LIST
-			#{
-			#
-			#$thread_data{'browser'}->get( 'https://schoollogic.psd70.ab.ca/Schoollogic/default.aspx' ); 
-			#print $thread_data{'browser'}->content();
-			#
-			#}
 			
+			#have to insert some way to select which hash index to use (or what parts of it? not sure yet).
+			#figure out what you want to do in here
 
+			#loop through the various steps of the task
+			foreach my $inner_index ( sort keys %{ $work{'1'}} ){
+													
+													
+				#do actions depending on what type of request this is
+				##############################################################GET
+				if( $work{'1'}{$inner_index}{'type'} eq 'GET'){
+					#if task is get, get the page
+					
+
+					#record the start time
+					my $thread_task_time = Time::HiRes::gettimeofday();
+					my $task_value = $work{'1'}{$inner_index}{'url'};
+					
+					#make the request
+					$thread_data{'browser'}->get( $task_value  );
+					
+					#did the request work
+					if (! $thread_data{'browser'}->success()) {
+						#request failed, log
+						log_message(threads->tid() . ", fail, GET " . $task_value . ", " . (Time::HiRes::gettimeofday() - $thread_task_time));
+					}else{
+					
+						#verify we are on the expected page
+						my $regex = $work{'1'}{$inner_index}{'verify'};
+						if($thread_data{'browser'}->content() =~ m/$regex/){
+					
+							#request success, log the elapsed time
+							log_message(threads->tid() . ", success, GET " . $task_value . ", " . (Time::HiRes::gettimeofday() - $thread_task_time));
+						}else{
+							
+							#request failed, log the elapsed time
+							log_message(threads->tid() . ", unexpected page, GET " . $task_value .  ", " . (Time::HiRes::gettimeofday() - $thread_task_time));
+						}
+					
+					}
+				
+				##############################################################POST
+				} elsif( $work{'1'}{$inner_index}{'type'} eq 'POST'){
+				
+				} else{
+					#there shouldn't be any options other than GET and POST
+					print "problem \n";
+				}
+			
+			#do the next action in the list.
+			}
+			
+			
+						
+						
+						
 			
 			
 			########################################
 			#IMPLEMENT LOGOUT HERE
 			########################################
-			
-
-			
+				
 			
 
 		
@@ -203,17 +258,17 @@ while(1){
 			
 			#check exit state of this thread
 			if($DEBUG){
-				print threads->list(threads::running) . ", $maxThreads \n";
-				print threads->tid() . " un: " . $userlist{$unpwindex}{'username'} . "\n";
-				print threads->tid() . " pw: " . $userlist{$unpwindex}{'password'} . "\n";
-				print threads->tid() . " unpwindex: " . $unpwindex . "\n";
+				#print threads->list(threads::running) . ", $maxThreads \n";
+				#print threads->tid() . " un: " . $userlist{$unpwindex}{'username'} . "\n";
+				#print threads->tid() . " pw: " . $userlist{$unpwindex}{'password'} . "\n";
+				#print threads->tid() . " unpwindex: " . $unpwindex . "\n";
 			}				
 		
 			
 			#get time elapsed since thread started
 			$thread_data{'time'} = Time::HiRes::gettimeofday() - $thread_data{'time'};
 			#log and exit
-			log_message(threads->tid() . ", exit, " . $thread_data{'time'});
+			log_message(threads->tid() . ", exit, ," . $thread_data{'time'});
 
 			
 			
@@ -271,6 +326,8 @@ sub child_handler(){
 
 
 #sub that holds open the logfile so that we don't have overhead of opening and closing logfile for each message
+# format: (thread id, action (login,exit,succses,failure,etc), target (google.ca or similar), elapsed time)
+#
 sub log_message(){
 	#if logging to file is enabled do so, otherwise log to stdout
 	if(defined $log_file){
