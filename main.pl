@@ -26,7 +26,7 @@ $SIG{'CHLD'} = \&child_handler;
 my $use_credentials_semaphore = Thread::Semaphore->new();
 
 # where to point the script -change later
-my $target = '';
+my $target = 'http://localhost/SchoolLogic/login.aspx?ReturnUrl=%2fschoollogic%2fDefault.aspx';
 
 my $userlist_index_counter = 1; #counter for incrementing the index when populating %userlist hash
 my $userlist_inuse_LOCK; #variable to store a lock value for the "inuse" check.
@@ -65,7 +65,7 @@ open(my $userlist_filehandle , "<", $userlist_file) || die("could not find user 
 
 while(<$userlist_filehandle>){
 	#if the format of the record is okay, load into data structure
-	if( m/^([A-Za-z0-9 ]+),([A-Za-z0-9 ]*)$/ ){
+	if( m/^([A-Za-z.0-9- ]+),([A-Za-z.0-9- ]*)$/ ){
 		share($userlist{$userlist_index_counter}{'username'});
 		share($userlist{$userlist_index_counter}{'password'});
 		share($userlist{$userlist_index_counter}{'inuse'});
@@ -73,6 +73,7 @@ while(<$userlist_filehandle>){
 		$userlist{$userlist_index_counter}{'password'} = $2;
 		$userlist{$userlist_index_counter}{'inuse'} = 0;
 		$userlist_index_counter++;
+		#print $1, $2;
 	}
 }
 close($userlist_filehandle) || warn("could not close user list $userlist_file \n");
@@ -89,19 +90,19 @@ my %work;
 
 #some hardcoded test values
 $work{'1'}{'1'}{'type'} = 'GET';
-$work{'1'}{'1'}{'url'} = 'http://www.google.ca';
-$work{'1'}{'1'}{'verify'} = '<title>Google</title>';
+$work{'1'}{'1'}{'url'} = 'http://localhost/schoollogic/NavPage.aspx?MenuItem=Demographics';
+$work{'1'}{'1'}{'verify'} = 'SchoolLogic - Demographics';
 
 $work{'1'}{'2'}{'type'} = 'GET';
-$work{'1'}{'2'}{'url'} = 'http://www.schoollogic.com';
-$work{'1'}{'2'}{'verify'} = '<title>School Logic</title>';
+$work{'1'}{'2'}{'url'} = 'http://localhost/schoollogic/NavPage.aspx?MenuItem=IndividualGradesEntry';
+$work{'1'}{'2'}{'verify'} = 'SchoolLogic - Grades';
 
 
 
 ###########
 
-my $maxThreads = 2;
-my $threadInterval = 4;	#seconds
+my $maxThreads = 10;
+my $threadInterval = 0;	#seconds
 my $activityInterval = 10;
 
 
@@ -123,7 +124,7 @@ while(1){
 			# $thread_data{'username'}
 			# $thread_data{'password'}
 			my %thread_data;
-					
+
 			#initial timer for timing the thread
 			$thread_data{'time'} = Time::HiRes::gettimeofday();
 		
@@ -141,10 +142,9 @@ while(1){
 			my $unpwindex = 0;
 			my $i;
 			while($unpwindex == 0){
-				for($i=1;$i<rand(1000);$i++){ };
 				$unpwindex = use_credentials();
 			}
-				
+
 				
 	
 			##LOGIN
@@ -157,6 +157,8 @@ while(1){
 				print $thread_data{'browser'}->status() . "\n"; 
 			}
 			
+			print threads->tid() . " un " . $userlist{$unpwindex}{'username'} . "\n";
+			print threads->tid() . " pw " . $userlist{$unpwindex}{'password'} . "\n";
 			
 			#now we login. the field() function sets the value of a field (www::mechanize magic). 
 			#populate username and password, hidden fields, then submit
@@ -169,15 +171,16 @@ while(1){
 															Submit => 'Login',
 															},
 														button => 'Submit'
-														);
+														) || "fail";
 			
 			# check that we are on the right page. if not, quit thread.
-			if($result->content() =~ m/<head id="ctl00_Head1">/){
+			if($result->decoded_content() =~ m/ctl00_Head1/){
 					log_message(threads->tid() . ", login, , " . (Time::HiRes::gettimeofday() - $thread_data{'time'}));
 			}else{
 					#log and quit if we cant login
-					print $result->content();
+					#print $result->decoded_content();
 					log_message(threads->tid() . ", login error, , " . (Time::HiRes::gettimeofday() - $thread_data{'time'}));
+					free_credentials($unpwindex);
 					threads->exit();	
 			}
 			
@@ -356,7 +359,6 @@ sub use_credentials() {
 		next if $returnVal != 0;
 		#semaphore to lock this code block
 		$use_credentials_semaphore->down();
-
 		if($userlist{$userlist_sort_indexes}{'inuse'} == 0){
 		#then we are going to take this un/pw and mark it in-use
 			$userlist{$userlist_sort_indexes}{'inuse'} = 1;
