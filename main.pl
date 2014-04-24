@@ -102,7 +102,7 @@ $work{'1'}{'2'}{'verify'} = 'SchoolLogic - Grades';
 ###########
 
 my $maxThreads = 10;
-my $threadInterval = 0;	#seconds
+my $threadInterval = 0.15;	#seconds
 my $activityInterval = 10;
 
 
@@ -162,6 +162,7 @@ while(1){
 			
 			#now we login. the field() function sets the value of a field (www::mechanize magic). 
 			#populate username and password, hidden fields, then submit
+			my $time = Time::HiRes::gettimeofday();
 			my $result = $thread_data{'browser'}->submit_form(	form_name => 'Form1',
 														fields => {
 															txtUserName => $userlist{$unpwindex}{'username'},
@@ -175,11 +176,11 @@ while(1){
 			
 			# check that we are on the right page. if not, quit thread.
 			if($result->decoded_content() =~ m/ctl00_Head1/){
-					log_message(threads->tid() . ", login, , " . (Time::HiRes::gettimeofday() - $thread_data{'time'}));
+					log_message(threads->tid() . ", login, , " . (Time::HiRes::gettimeofday() - $time));
 			}else{
 					#log and quit if we cant login
 					#print $result->decoded_content();
-					log_message(threads->tid() . ", login error, , " . (Time::HiRes::gettimeofday() - $thread_data{'time'}));
+					log_message(threads->tid() . ", login error, , " . (Time::HiRes::gettimeofday() - $time));
 					free_credentials($unpwindex);
 					threads->exit();	
 			}
@@ -197,6 +198,8 @@ while(1){
 			#loop through the various steps of the task
 			foreach my $inner_index ( sort keys %{ $work{'1'}} ){
 													
+				#pause between actions
+				sleep($activityInterval);
 													
 				#do actions depending on what type of request this is
 				##############################################################GET
